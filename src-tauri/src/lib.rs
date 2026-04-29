@@ -198,7 +198,6 @@ async fn open_chat_window(app: tauri::AppHandle, chat_id: String, chat_type: Str
         .visible(true)
         .focused(true)
         .always_on_top(false)
-        .background_throttling(Some(tauri::utils::config::BackgroundThrottlingPolicy::Disabled))
         .build()
         .map_err(|e| format!("build fail: {}", e))?;
     // 명시적 표시 + 포커스 + 잠시 always_on_top으로 주의 끌기
@@ -560,19 +559,27 @@ async fn run_socket_loop(app: &tauri::AppHandle, xapp_token: &str) -> Result<(),
 // ========= 작업 표시줄 unread 배지 (Windows taskbar overlay icon) =========
 #[tauri::command]
 fn set_unread_badge(app: tauri::AppHandle, count: u32) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("main") {
-        if count > 0 {
-            let icon = tauri::include_image!("icons/badge_red.png");
-            let _ = w.set_overlay_icon(Some(icon));
-            // 트레이 tooltip도 업데이트
-            if let Some(tray) = app.tray_by_id("main-tray") {
-                let _ = tray.set_tooltip(Some(format!("Slack 대시보드 ({} 안 읽음)", count)));
+    if count > 0 {
+        // Windows 전용 overlay icon (macOS는 트레이 tooltip만)
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(w) = app.get_webview_window("main") {
+                let icon = tauri::include_image!("icons/badge_red.png");
+                let _ = w.set_overlay_icon(Some(icon));
             }
-        } else {
-            let _ = w.set_overlay_icon(None);
-            if let Some(tray) = app.tray_by_id("main-tray") {
-                let _ = tray.set_tooltip(Some("Slack 대시보드".to_string()));
+        }
+        if let Some(tray) = app.tray_by_id("main-tray") {
+            let _ = tray.set_tooltip(Some(format!("Slack 대시보드 ({} 안 읽음)", count)));
+        }
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_overlay_icon(None);
             }
+        }
+        if let Some(tray) = app.tray_by_id("main-tray") {
+            let _ = tray.set_tooltip(Some("Slack 대시보드".to_string()));
         }
     }
     Ok(())
