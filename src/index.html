@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>💬 개인대시보드 Slack</title>
+
+    <!-- PWA 설정 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#fef033">
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
+
+    <!-- 스타일 불러오기 -->
+    <script>
+        fetch('style.html').then(r => r.text()).then(t => {
+            document.head.insertAdjacentHTML('beforeend', t);
+        });
+    </script>
+</head>
+<body>
+    <!-- 로딩 중 표시 -->
+    <div id="loading" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#fef3c7,#fde68a);font-family:sans-serif;z-index:99999;">
+        <div style="text-align:center;">
+            <div style="font-size:60px;animation:bounce 1s infinite;">💬</div>
+            <div style="font-size:16px;font-weight:700;color:#1e293b;margin-top:10px;">Slack 대시보드 로딩 중...</div>
+        </div>
+    </div>
+    <style>
+        @keyframes bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-15px); } }
+    </style>
+
+    <!-- body.html + app.js + multi_window.js 순서대로 로드 -->
+    <script>
+        (async function() {
+            try {
+                // [v3.2] cache-bust: 매 로드마다 새 파일 받기 (PWA/SW 캐시 우회)
+                var __cb = '?v=' + Date.now();
+                var __fetchOpt = { cache: 'no-store' };
+
+                // 1. body.html 로드
+                const bodyRes = await fetch('body.html' + __cb, __fetchOpt);
+                const bodyHtml = await bodyRes.text();
+                document.body.insertAdjacentHTML('beforeend', bodyHtml);
+
+                // 2. app.js 로드
+                const appRes = await fetch('app.js' + __cb, __fetchOpt);
+                let appJs = await appRes.text();
+                appJs = appJs.replace(/<\/?script[^>]*>/g, '');
+
+                const scriptEl = document.createElement('script');
+                scriptEl.textContent = appJs;
+                document.body.appendChild(scriptEl);
+
+                // 3. multi_window.js 로드 (PC 멀티윈도우 + 팝업 도우미)
+                const mwRes = await fetch('multi_window.js' + __cb, __fetchOpt);
+                const mwJs = await mwRes.text();
+                const mwScript = document.createElement('script');
+                mwScript.textContent = mwJs;
+                document.body.appendChild(mwScript);
+
+                // 4. 로딩 화면 제거
+                setTimeout(() => {
+                    const loading = document.getElementById('loading');
+                    if (loading) loading.style.display = 'none';
+                }, 500);
+
+                // [v4.2] 채팅 전용 창 모드: ?chatWindow=1&id=...&type=...&name=...
+                try {
+                    var qs = new URLSearchParams(location.search);
+                    if (qs.get('chatWindow') === '1') {
+                        var cid = qs.get('id');
+                        var ctype = qs.get('type') || 'dm';
+                        // 메인 UI 모두 숨기고 채팅 popup만 풀스크린
+                        document.body.classList.add('chat-window-mode');
+                        var hideStyle = document.createElement('style');
+                        hideStyle.textContent = 'html,body{margin:0!important;padding:0!important;background:#b2c7d9!important;}.chat-window-mode .top-bar,.chat-window-mode .app-container,.chat-window-mode .slack-popup-dock,.chat-window-mode #landingPage{display:none!important}.chat-window-mode .slack-popup-container{inset:0!important;width:100vw!important;height:100vh!important;}.chat-window-mode .slack-popup{position:fixed!important;left:0!important;top:0!important;right:0!important;bottom:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;border-radius:0!important;transform:none!important;display:flex!important;margin:0!important;}.chat-window-mode .slack-popup.minimized{display:flex!important;transform:none!important;}.chat-window-mode .slack-popup .popup-btn-min,.chat-window-mode .slack-popup .popup-btn-max,.chat-window-mode .slack-popup .popup-btn-close,.chat-window-mode .slack-popup [onclick*="minimize"],.chat-window-mode .slack-popup [onclick*="closeSlackPopup"]{display:none!important}.chat-window-mode body,.chat-window-mode html{overflow:hidden}';
+                        document.head.appendChild(hideStyle);
+                        // [v4.15] 키보드 단축키: Esc, Ctrl+W → 창 닫기 (hide)
+                        document.addEventListener('keydown', function(e) {
+                            if (e.key === 'Escape' || (e.ctrlKey && (e.key === 'w' || e.key === 'W'))) {
+                                e.preventDefault();
+                                if (window.__TAURI__ && window.__TAURI__.window) {
+                                    try {
+                                        var cur = window.__TAURI__.window.getCurrentWindow ?
+                                            window.__TAURI__.window.getCurrentWindow() :
+                                            window.__TAURI__.window.getCurrent();
+                                        cur && cur.hide && cur.hide();
+                                    } catch(err) { window.close(); }
+                                }
+                            }
+                        });
+                        // 창 활성화 시 입력란 자동 포커스
+                        window.addEventListener('focus', function() {
+                            setTimeout(function() {
+                                var inp = document.querySelector('.slack-popup-input, .slack-popup-message-input, [contenteditable], textarea');
+                                if (inp && typeof inp.focus === 'function') inp.focus();
+                            }, 200);
+                        });
+                        // 창 show 이벤트 시 popup 상태 강제 복원 (minimize 해제)
+                        var __ensurePopupVisible = function() {
+                            try {
+                                var ps = document.querySelectorAll('.slack-popup');
+                                ps.forEach(function(p) {
+                                    p.classList.remove('minimized');
+                                    p.style.setProperty('display', 'flex', 'important');
+                                    p.style.setProperty('transform', 'none', 'important');
+                                });
+                            } catch(e) {}
+                        };
+                        document.addEventListener('visibilitychange', function() {
+                            if (document.visibilityState === 'visible') setTimeout(__ensurePopupVisible, 100);
+                        });
+                        window.addEventListener('focus', function() { setTimeout(__ensurePopupVisible, 100); });
+                        setInterval(__ensurePopupVisible, 1500);
+                        // openSlackChatPopup이 준비되면 자동 열기 (멀티 시도)
+                        var tries = 0;
+                        var openTimer = setInterval(function() {
+                            tries++;
+                            if (typeof window.openSlackChatPopup === 'function') {
+                                clearInterval(openTimer);
+                                // 약간 대기 후 (데이터 로딩) 자동 클릭
+                                setTimeout(function() {
+                                    try { window.openSlackChatPopup(ctype, cid); } catch(e) { console.error(e); }
+                                }, 600);
+                            }
+                            if (tries > 50) clearInterval(openTimer);
+                        }, 100);
+                    }
+                } catch(e) { console.warn('[chatWindow] init fail', e); }
+
+                // [Tauri] 네이티브 앱에서는 SW 불필요 → 네이티브 알림/진단 모듈만 로드
+                var __isTauri = (typeof window.__TAURI__ !== 'undefined' || typeof window.__TAURI_INTERNALS__ !== 'undefined');
+                if (__isTauri) {
+                    try {
+                        const diagRes = await fetch('tauri_diag.js' + __cb, __fetchOpt);
+                        const diagJs = await diagRes.text();
+                        const diagScript = document.createElement('script');
+                        diagScript.textContent = diagJs;
+                        document.body.appendChild(diagScript);
+                    } catch(e) { console.warn('[Tauri] diag load fail', e); }
+                    // 메인 창에서만 자가 테스트
+                    if (location.search.indexOf('chatWindow=1') === -1) {
+                        try {
+                            const stRes = await fetch('self_test.js' + __cb, __fetchOpt);
+                            const stJs = await stRes.text();
+                            const stScript = document.createElement('script');
+                            stScript.textContent = stJs;
+                            document.body.appendChild(stScript);
+                        } catch(e) { console.warn('[selftest load fail]', e); }
+                    }
+                    return; // SW 스킵
+                }
+
+                // 5. Service Worker 등록 (알림용) — [v3.8] controller 자동 활성화
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.register('sw.js').then(function(reg) {
+                        // SW가 새로 install 됐는데 현재 페이지를 제어 안 하면 → 한 번만 reload
+                        //   (알림 정확히 뜨려면 controller 필요)
+                        if (reg.active && !navigator.serviceWorker.controller) {
+                            if (!sessionStorage.getItem('sw_claimed_v38')) {
+                                sessionStorage.setItem('sw_claimed_v38', '1');
+                                // 부드럽게 SW가 clients.claim() 하도록 약간 대기
+                                setTimeout(function() {
+                                    if (!navigator.serviceWorker.controller) {
+                                        console.log('[SW] controller 없음 → reload');
+                                        window.location.reload();
+                                    }
+                                }, 1500);
+                            }
+                        }
+                    }).catch(function(e) { console.log('SW 등록 실패:', e); });
+                    // controller 바뀌면 로그
+                    navigator.serviceWorker.addEventListener('controllerchange', function() {
+                        console.log('[SW] controller 활성화됨');
+                    });
+                }
+            } catch(e) {
+                document.getElementById('loading').innerHTML =
+                    '<div style="text-align:center;color:#ef4444;"><div style="font-size:50px;">😢</div><div>로딩 실패: ' + e.message + '</div></div>';
+            }
+        })();
+    </script>
+</body>
+</html>

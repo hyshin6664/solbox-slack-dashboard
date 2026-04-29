@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Slack 대시보드 기본 권한",
+  "windows": ["main", "login", "chat-*", "img-*"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:tray:default",
+    "core:menu:default",
+    "opener:default",
+    "notification:default",
+    "notification:allow-notify",
+    "shell:default",
+    "shell:allow-open",
+    "dialog:default",
+    "dialog:allow-confirm",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "autostart:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
+  ]
+}

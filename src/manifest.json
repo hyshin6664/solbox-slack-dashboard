@@ -1,0 +1,35 @@
+{
+  "name": "Slack 대시보드",
+  "short_name": "Slack",
+  "description": "회사 Slack을 카톡처럼 가볍게 쓰는 대시보드",
+  "start_url": "./",
+  "display": "standalone",
+  "display_override": ["tabbed", "window-controls-overlay", "standalone"],
+  "launch_handler": {
+    "client_mode": ["navigate-new", "auto"]
+  },
+  "capture_links": "new-client",
+  "tab_strip": {
+    "new_tab_button": {
+      "url": "./"
+    }
+  },
+  "background_color": "#fef033",
+  "theme_color": "#fef033",
+  "orientation": "portrait",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
