@@ -1,4 +1,4 @@
-// Slack 대시보드 — Tauri 백엔드 v6.10.24 (별창 위치 명시 + always_on_top 잠깐 + confirm 제거)
+// Slack 대시보드 — Tauri 백엔드 v6.10.25 (안정성: API retry + Socket 지수 백오프)
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, Emitter};
 use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::menu::{Menu, MenuItem};
@@ -216,16 +216,15 @@ async fn open_chat_window(app: tauri::AppHandle, chat_id: String, chat_type: Str
     Ok(())
 }
 
-// ========= [v6.8.2] Slack API 호출 — read는 GET+query, write는 POST+JSON =========
+// ========= [v6.10.25] Slack API — 자동 재시도 + 지수 백오프 (안정성) =========
 #[tauri::command]
 async fn slack_api(method: String, token: String, params: serde_json::Value) -> Result<serde_json::Value, String> {
     let url = format!("https://slack.com/api/{}", method);
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
 
-    // Slack API: read API는 GET + query string 권장, write는 POST + JSON OK
     let is_get = matches!(method.as_str(),
         "conversations.members" | "conversations.list" | "conversations.history" |
         "conversations.info" | "conversations.replies" | "conversations.mark" |
@@ -233,32 +232,46 @@ async fn slack_api(method: String, token: String, params: serde_json::Value) -> 
         "auth.test" | "rtm.connect" | "api.test" | "files.info" | "search.messages" | "search.files"
     );
 
-    let resp = if is_get {
-        let mut req = client.get(&url).header("Authorization", format!("Bearer {}", token));
-        if let serde_json::Value::Object(map) = &params {
-            let q: Vec<(String, String)> = map.iter().map(|(k, v)| {
-                let s = match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::Null => String::new(),
-                    _ => v.to_string(),
-                };
-                (k.clone(), s)
-            }).collect();
-            req = req.query(&q);
+    let mut last_err = String::new();
+    for attempt in 0..3u32 {
+        if attempt > 0 {
+            let delay_ms = 500u64 * (1u64 << (attempt - 1)); // 500, 1000, 2000ms
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
         }
-        req.send().await
-    } else {
-        let mut req = client.post(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Content-Type", "application/json; charset=utf-8");
-        if !params.is_null() { req = req.json(&params); }
-        req.send().await
-    };
-    let resp = resp.map_err(|e| e.to_string())?;
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(json)
+        let resp_res = if is_get {
+            let mut req = client.get(&url).header("Authorization", format!("Bearer {}", token));
+            if let serde_json::Value::Object(map) = &params {
+                let q: Vec<(String, String)> = map.iter().map(|(k, v)| {
+                    let s = match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Null => String::new(),
+                        _ => v.to_string(),
+                    };
+                    (k.clone(), s)
+                }).collect();
+                req = req.query(&q);
+            }
+            req.send().await
+        } else {
+            let mut req = client.post(&url)
+                .header("Authorization", format!("Bearer {}", token))
+                .header("Content-Type", "application/json; charset=utf-8");
+            if !params.is_null() { req = req.json(&params); }
+            req.send().await
+        };
+        match resp_res {
+            Ok(resp) => {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(json) => return Ok(json),
+                    Err(e) => last_err = format!("json parse: {}", e),
+                }
+            },
+            Err(e) => last_err = format!("net: {}", e),
+        }
+    }
+    Err(format!("slack_api {} failed after 3 retries: {}", method, last_err))
 }
 
 // [v6.10.5] Slack 파일/이미지 fetch — Bearer + webview 쿠키 + 수동 redirect
@@ -460,11 +473,22 @@ async fn start_socket_mode(app: tauri::AppHandle, xapp_token: String) -> Result<
     }
     let app_clone = app.clone();
     tokio::spawn(async move {
+        let mut consecutive_fails: u32 = 0;
         loop {
-            if let Err(e) = run_socket_loop(&app_clone, &xapp_token).await {
-                eprintln!("[socket] error: {}", e);
-                let _ = app_clone.emit("socket-status", serde_json::json!({"state": "error", "msg": e}));
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            match run_socket_loop(&app_clone, &xapp_token).await {
+                Ok(_) => {
+                    // 정상 종료(서버 disconnect 등) → 즉시 재연결
+                    consecutive_fails = 0;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                },
+                Err(e) => {
+                    eprintln!("[socket] error: {}", e);
+                    let _ = app_clone.emit("socket-status", serde_json::json!({"state": "error", "msg": e, "retry": consecutive_fails}));
+                    consecutive_fails += 1;
+                    // [v6.10.25] 지수 백오프: 2, 4, 8, 16, 30, 60, 60... (최대 60s 캡)
+                    let delay = std::cmp::min(60u64, 2u64.pow(std::cmp::min(consecutive_fails, 6)));
+                    tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+                },
             }
         }
     });
