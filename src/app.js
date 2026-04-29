@@ -3988,14 +3988,16 @@
     async function syncChannelUnreadViaInfo() {
         if (__unreadInfoInProgress) return;
         if (!window.__slackDirect) return;
-        if (!dummyChannels || dummyChannels.length === 0) return;
+        // [v6.10.26] 채널 + DM + MPIM 모두 sync (Slack 공식앱처럼 unread 정확 표시)
+        var targets = [].concat(dummyChannels || [], dummyDMs || []);
+        if (targets.length === 0) return;
         __unreadInfoInProgress = true;
         try {
             var changed = 0, ok = 0, fail = 0, hasLastRead = 0, hasLatest = 0;
             var sample = null;
-            for (var i = 0; i < dummyChannels.length; i++) {
-                var ch = dummyChannels[i];
-                if (!ch.id || !/^[CG]/.test(ch.id)) continue;
+            for (var i = 0; i < targets.length; i++) {
+                var ch = targets[i];
+                if (!ch.id || !/^[CGD]/.test(ch.id)) continue; // C=channel, G=group, D=DM
                 try {
                     // 1) info → last_read
                     var infoRes = await window.__slackDirect('conversations.info', { channel: ch.id, include_num_members: false });
@@ -4107,25 +4109,24 @@
             slackLastUnreadMap[it.id] = { unread: it.unread || 0, latestTs: it.latestTs || '' };
 
             // [v5.9] Server unread 그대로 사용 — local 누적 제거 (Slack 공식앱 read 즉시 반영)
-            // [v6.10.6] 채널의 경우 GAS pollAll이 unread를 못 받아오니까 (DM만 지원)
-            //   server unread > 0일 때만 적용. 0이면 v6.10.4 sync 값 보존.
+            // [v6.10.26] 채널 + DM 모두: server unread 0 → v6.10.26 sync 값 보존, >0이면 신뢰
             var serverUnread = it.unread || 0;
-            function applyUnread(arr, isChannel) {
+            function applyUnread(arr) {
                 for (var i = 0; i < arr.length; i++) {
                     if (arr[i].id === it.id) {
-                        // 채널: server가 0을 보내면 무시 (sync 값 보존). >0이면 신뢰.
-                        if (isChannel && serverUnread === 0) break;
+                        // server가 0을 보내면 무시 (직접 sync 값 보존). >0이면 신뢰.
+                        if (serverUnread === 0) break;
                         if (arr[i].unread !== serverUnread) {
                             arr[i].unread = serverUnread;
-                            arr[i].unreadLocal = serverUnread; // 동기화
+                            arr[i].unreadLocal = serverUnread;
                             listChanged = true;
                         }
                         break;
                     }
                 }
             }
-            applyUnread(dummyDMs, false);
-            applyUnread(dummyChannels, true);
+            applyUnread(dummyDMs);
+            applyUnread(dummyChannels);
 
             // unread 기반 알림 (latestItems에 없는 채널용 backup)
             if (isNewByUnread && !latestItems[it.id]) {

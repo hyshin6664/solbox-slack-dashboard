@@ -1,4 +1,4 @@
-// Slack 대시보드 — Tauri 백엔드 v6.10.25 (안정성: API retry + Socket 지수 백오프)
+// Slack 대시보드 — Tauri 백엔드 v6.10.26 (DM/MPIM unread 동기화)
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, Emitter};
 use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::menu::{Menu, MenuItem};
