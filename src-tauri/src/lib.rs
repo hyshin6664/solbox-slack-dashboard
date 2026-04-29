@@ -198,6 +198,7 @@ async fn open_chat_window(app: tauri::AppHandle, chat_id: String, chat_type: Str
         .visible(true)
         .focused(true)
         .always_on_top(false)
+        .background_throttling(Some(tauri::utils::config::BackgroundThrottlingPolicy::Disabled))
         .build()
         .map_err(|e| format!("build fail: {}", e))?;
     // 명시적 표시 + 포커스 + 잠시 always_on_top으로 주의 끌기
