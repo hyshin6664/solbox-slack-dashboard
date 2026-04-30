@@ -1,4 +1,4 @@
-// Slack 대시보드 — Tauri 백엔드 v6.10.26 (DM/MPIM unread 동기화)
+// Slack 대시보드 — Tauri 백엔드 v6.10.27 (별창 화면 검증 + 3초 always_on_top)
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, Emitter};
 use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::menu::{Menu, MenuItem};
@@ -200,15 +200,30 @@ async fn open_chat_window(app: tauri::AppHandle, chat_id: String, chat_type: Str
         .always_on_top(false)
         .build()
         .map_err(|e| format!("build fail: {}", e))?;
-    // 명시적 표시 + 포커스 + 잠시 always_on_top으로 주의 끌기
+    // [v6.10.27] 화면 가운데로 강제 + 3초간 always_on_top + 화면 밖이면 재배치
     let _ = w.show();
     let _ = w.unminimize();
     let _ = w.set_focus();
     let _ = w.set_always_on_top(true);
+    // 화면 안 검증 + 벗어나면 메인 모니터 가운데로
+    if let Ok(Some(m)) = w.current_monitor() {
+        let m_size = m.size();
+        let m_pos = m.position();
+        if let Ok(pos) = w.outer_position() {
+            let on_screen = (pos.x as i64) >= (m_pos.x as i64 - 10)
+                && (pos.x as i64) < (m_pos.x as i64 + m_size.width as i64 - 100)
+                && (pos.y as i64) >= (m_pos.y as i64 - 10);
+            if !on_screen {
+                let cx = m_pos.x + (m_size.width as i32 / 2) - 220;
+                let cy = m_pos.y + 100;
+                let _ = w.set_position(tauri::PhysicalPosition::new(cx, cy));
+            }
+        }
+    }
     let app2 = app.clone();
     let label2 = label.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(800)).await;
+        tokio::time::sleep(Duration::from_millis(3000)).await;
         if let Some(w2) = app2.get_webview_window(&label2) {
             let _ = w2.set_always_on_top(false);
         }
